@@ -1,7 +1,7 @@
 {
   "name": "LifeGame 3.0",
   "short_name": "LifeGame",
-  "description": "Блоки времени, Этапы и спокойный ритм каждого дня",
+  "description": "Блоки времени, Этапы, живой спутник и спокойный ритм каждого дня",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#0c0c0c",

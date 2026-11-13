@@ -802,3 +802,259 @@ body:has(.basic-mode) .toast-box { bottom: 24px; }
   font-size: 11.5px;
   font-weight: 750;
 }
+
+
+/* --- v3.0.1 Companion & Stage Conveyor --- */
+.helper-pill {
+  position: relative;
+  padding: 5px 9px;
+  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 750;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.helper-pill:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+.helper-pill.onboarding-active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.helper-signal-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  border: 1.5px solid var(--bg);
+}
+.onb-progress-bar {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 5px;
+  margin: 8px 0 12px;
+}
+.onb-seg {
+  height: 5px;
+  border-radius: 99px;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+}
+.onb-seg.done {
+  background: var(--good);
+  border-color: var(--good);
+}
+.onb-seg.current {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.onb-seg.skipped {
+  background: var(--border-strong);
+}
+@keyframes lg3PulseGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 213, 74, 0.0); }
+  35% { box-shadow: 0 0 0 4px rgba(255, 213, 74, 0.72), 0 0 18px rgba(255, 213, 74, 0.45); }
+}
+.lg3-helper-pulse {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: 2px !important;
+  animation: lg3PulseGlow 1.35s ease-in-out 3;
+}
+.conveyor-badge {
+  font-size: 10.5px;
+  font-weight: 750;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.conveyor-badge.is-head {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+@media (max-width: 392px) {
+  .top-header { padding: 8px 12px; gap: 6px; }
+  .brand-btn { letter-spacing: 0.07em; font-size: 11.5px; gap: 5px; }
+  .back-chip { padding: 5px 8px; font-size: 12px; }
+  .mode-pill { padding: 4px 8px; font-size: 11px; }
+  .helper-pill { padding: 4px 7px; font-size: 11px; }
+  .wallet-pill { padding: 4px 8px; font-size: 11.5px; }
+}
+
+
+/* --- v3.0.2 Off-Screen Animated Companion & Edge Bubble --- */
+.lg3-shell-rig {
+  position: relative;
+  max-width: 480px;
+  margin: 0 auto;
+}
+body.wide-shell .lg3-shell-rig {
+  max-width: 720px;
+}
+
+.lg3-offscreen-companion {
+  position: fixed;
+  left: calc(50% + 234px);
+  bottom: 108px;
+  width: 94px;
+  height: 100px;
+  z-index: 44;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease;
+}
+body.wide-shell .lg3-offscreen-companion {
+  left: calc(50% + 354px);
+}
+
+/* Когда ширина окна не вмещает внешний карман справа — аккуратная посадка у правой кромки над табами */
+@media (max-width: 680px) {
+  .lg3-offscreen-companion {
+    left: auto;
+    right: -6px;
+    bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+    width: 72px;
+    height: 78px;
+  }
+  .lg3-offscreen-companion.in-basic {
+    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+  .lg3-offscreen-companion.with-timer {
+    bottom: calc(134px + env(safe-area-inset-bottom, 0px));
+  }
+}
+body.wide-shell .lg3-offscreen-companion {
+  /* На средних экранах с включённой широкой колонкой тоже бережём кромку */
+}
+@media (max-width: 920px) {
+  body.wide-shell .lg3-offscreen-companion {
+    left: auto;
+    right: -6px;
+    bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+    width: 76px;
+    height: 82px;
+  }
+}
+
+body.is-typing-input .lg3-offscreen-companion {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.lg3-offscreen-companion.is-tucked {
+  width: 26px;
+  height: 54px;
+  border-radius: 14px 0 0 14px;
+  background: var(--card);
+  border: 1px solid var(--accent-border);
+  box-shadow: var(--shadow);
+}
+@media (min-width: 681px) {
+  .lg3-offscreen-companion.is-tucked {
+    left: calc(50% + 240px);
+    border-radius: 0 14px 14px 0;
+    border-left: none;
+  }
+  body.wide-shell .lg3-offscreen-companion.is-tucked {
+    left: calc(50% + 360px);
+  }
+}
+@media (max-width: 680px) {
+  .lg3-offscreen-companion.is-tucked {
+    right: 0;
+  }
+}
+
+.lg3-companion-stage-inner {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.48));
+}
+.lg3-custom-sprite-slice {
+  width: 100%;
+  height: 100%;
+  background-repeat: no-repeat;
+  background-size: 500% 100%;
+  border-radius: 14px;
+}
+[data-theme="night"] .lg3-custom-sprite-slice,
+[data-theme="slate"] .lg3-custom-sprite-slice {
+  mix-blend-mode: lighten;
+}
+
+.lg3-edge-signal-badge {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  border: 2px solid var(--bg);
+  pointer-events: none;
+}
+.lg3-edge-signal-badge.is-red {
+  background: var(--danger);
+  box-shadow: 0 0 10px var(--danger);
+}
+
+.lg3-edge-bubble {
+  position: absolute;
+  right: calc(100% + 8px);
+  bottom: 10px;
+  width: min(268px, calc(100vw - 92px));
+  background: var(--card);
+  border: 1px solid var(--accent-border);
+  border-radius: 18px;
+  padding: 12px 13px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.62);
+  z-index: 55;
+  cursor: default;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lg3-edge-bubble.is-red {
+  border-color: rgba(248, 113, 113, 0.52);
+}
+
+.archetype-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+}
+.archetype-tile {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+}
+.archetype-tile.active {
+  border-color: var(--accent);
+  background: linear-gradient(155deg, var(--accent-soft), var(--card-2) 78%);
+}

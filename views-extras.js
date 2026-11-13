@@ -689,6 +689,57 @@ function renderSettingsAndAiView(state, openAiTab) {
           ` : ''}
         </div>
 
+        <!-- 2Б. Внеэкранный спутник: выбор из 5 архетипов, примерочная состояний и кастомный спрайт -->
+        <div class="card" style="display:flex; flex-direction:column; gap:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <div>
+              <div style="font-weight:750;">Внеэкранный спутник и характер</div>
+              <div style="font-size:12px; color:var(--muted);">Живёт за краем рамки, отражает режим дня и растёт с уровнем XP</div>
+            </div>
+            <button type="button" class="mini-btn" data-act="toggle-companion-tuck">
+              ${state.companion?.tucked ? 'Развернуть у края' : 'Свернуть за край'}
+            </button>
+          </div>
+
+          <div class="archetype-grid">
+            ${LG3_COMPANION_ARCHETYPES.map(a => {
+              const curArch = state.companion?.archetype || 'wayfarer';
+              const w = calcWallet(state);
+              const post = resolveCompanionPosture(state, UI3.previewPosture);
+              return `
+                <button type="button" class="archetype-tile ${curArch === a.id ? 'active' : ''}" data-act="set-companion-archetype" data-val="${esc(a.id)}">
+                  ${LG3CompanionAvatar.renderStaticPreviewSVG(a.id, post, w.level, countRedCareDone(state))}
+                  <strong style="font-size:12.5px;">${esc(a.name)}</strong>
+                  <span style="font-size:10.5px; color:var(--accent);">${esc(a.pillar)}</span>
+                </button>
+              `;
+            }).join('')}
+          </div>
+
+          <div style="font-size:12px; color:var(--muted);">${esc(getCompanionArchetype(state.companion?.archetype).shortDesc)}</div>
+
+          <div style="font-size:11.5px; color:var(--muted); padding-top:2px;">Проверить позу и реакцию спутника:</div>
+          <div class="pills">
+            <button type="button" class="pill ${UI3.previewPosture === 'lite' ? 'active' : ''}" data-act="preview-companion-posture" data-val="lite">1. Налегке</button>
+            <button type="button" class="pill ${UI3.previewPosture === 'pro' ? 'active' : ''}" data-act="preview-companion-posture" data-val="pro">2. Доспех Pro</button>
+            <button type="button" class="pill ${UI3.previewPosture === 'tired' ? 'active' : ''}" data-act="preview-companion-posture" data-val="tired">3. Устал (5-й день)</button>
+            <button type="button" class="pill ${UI3.previewPosture === 'fierce' ? 'active' : ''}" data-act="preview-companion-posture" data-val="fierce">4. Жмём дальше! 🔥</button>
+            <button type="button" class="pill ${UI3.previewPosture === 'rest' ? 'active' : ''}" data-act="preview-companion-posture" data-val="rest">5. Отдых</button>
+            ${UI3.previewPosture ? `<button type="button" class="mini-btn" data-act="preview-companion-posture" data-val="">Авто по режиму</button>` : ''}
+          </div>
+
+          <div style="display:flex; gap:7px; flex-wrap:wrap; align-items:center;">
+            <button type="button" class="mini-btn" style="color:var(--danger); border-color:rgba(248,113,113,0.4);" data-act="simulate-red-day5">Проверить диалог 5-го дня Мобилизации</button>
+            <label class="mini-btn" style="cursor:pointer; color:var(--accent); border-color:var(--accent-border);">
+              📎 Загрузить свой лист 1×5
+              <input type="file" accept="image/*" style="display:none;" data-change="upload-custom-sprite"/>
+            </label>
+            ${LG3CompanionAvatar.getCustomSprite() ? `
+              <button type="button" class="mini-btn" data-act="reset-custom-sprite">Вернуть векторный вид</button>
+            ` : ''}
+          </div>
+        </div>
+
         <!-- 3. Палитра и комфорт -->
         <div class="card" style="display:flex; flex-direction:column; gap:10px;">
           <div style="font-weight:750;">Оформление и комфорт</div>
@@ -701,6 +752,7 @@ function renderSettingsAndAiView(state, openAiTab) {
             <button type="button" class="pill ${state.settings.sound ? 'active' : ''}" data-act="toggle-setting" data-k="sound">${state.settings.sound ? '🔊 Звук вкл' : '🔇 Без звука'}</button>
             <button type="button" class="pill ${state.settings.showMotivation ? 'active' : ''}" data-act="toggle-setting" data-k="showMotivation">Мотивация на Главной</button>
             <button type="button" class="pill ${UI3.wide ? 'active' : ''}" data-act="toggle-wide">📱 / 🖥 Ширина</button>
+            <button type="button" class="pill ${state.companion?.enabled !== false ? 'active' : ''}" data-act="toggle-companion-enabled">${state.companion?.enabled !== false ? '🤖 Помощник вкл' : '🤖 Помощник скрыт'}</button>
           </div>
         </div>
 
@@ -1127,6 +1179,157 @@ function renderModalDialog(state) {
         <button type="button" class="btn-ghost" data-act="close-modal">Отмена</button>
         <button type="button" class="btn-primary" style="background:var(--danger); color:#fff;" data-act="confirm-hard-reset">Сбросить</button>
       </div>
+    `;
+  } else if (m.name === 'companion') {
+    const comp = state.companion || { enabled: true, done: {}, skipped: {} };
+    const signals = evaluateCompanionSignals(state);
+    const nextOnb = getNextOnboardingIdx(state);
+    const hTab = UI3.helperTab || (nextOnb >= 0 ? 'onb' : 'screen');
+    const stepViewIdx = (typeof UI3.helperStepIdx === 'number' && UI3.helperStepIdx >= 0 && UI3.helperStepIdx < 7)
+      ? UI3.helperStepIdx
+      : (nextOnb >= 0 ? nextOnb : 0);
+    const curStep = LG3_ONBOARDING_7_DAYS[stepViewIdx];
+    const isStepDone = !!comp.done[stepViewIdx];
+    const isStepSkipped = !!comp.skipped[stepViewIdx];
+    const guideKey = LG3_SCREEN_GUIDES[UI3.route] ? UI3.route : 'home';
+    const guide = LG3_SCREEN_GUIDES[guideKey];
+    const kbQuery = (UI3.kbSearch || '').trim().toLowerCase();
+    const filteredCards = kbQuery
+      ? LG3_KNOWLEDGE_CARDS.filter(c => c.title.toLowerCase().includes(kbQuery) || c.text.toLowerCase().includes(kbQuery) || c.tag.toLowerCase().includes(kbQuery))
+      : LG3_KNOWLEDGE_CARDS;
+
+    const curArch = getCompanionArchetype(comp.archetype);
+    const wComp = calcWallet(state);
+    const curPost = resolveCompanionPosture(state, UI3.previewPosture);
+    const xpRankLabel = wComp.level >= 8 ? 'Мастер света ◎' : (wComp.level >= 4 ? 'Опытный проводник ★' : 'Пробуждение');
+
+    content = `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="flex-shrink:0;">${LG3CompanionAvatar.renderStaticPreviewSVG(curArch.id, curPost, wComp.level, countRedCareDone(state))}</div>
+          <div>
+            <div style="font-weight:800; font-size:15px;">${esc(curArch.name)} · <span style="font-size:12px; color:var(--accent);">Ур. ${wComp.level} (${xpRankLabel})</span></div>
+            <div style="font-size:12px; color:var(--muted);">«${esc(curArch.voices[curPost] || curArch.voices.pro)}»</div>
+          </div>
+        </div>
+        <button type="button" class="mini-btn" data-act="close-modal">✕</button>
+      </div>
+
+      ${signals.length > 0 ? `
+        <div class="card-2" style="border-color:${signals[0].id.includes('red') ? 'rgba(248,113,113,0.45)' : 'var(--accent-border)'}; background:${signals[0].id.includes('red') ? 'var(--danger-soft)' : 'var(--accent-soft)'}; margin-bottom:11px; display:flex; flex-direction:column; gap:6px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
+            <span style="font-size:11px; font-weight:800; color:${signals[0].id.includes('red') ? 'var(--danger)' : 'var(--accent)'}; text-transform:uppercase;">💡 Напарник спрашивает</span>
+            <button type="button" class="mini-btn" style="padding:2px 7px;" data-act="dismiss-helper-signal" data-id="${esc(signals[0].id)}">Скрыть</button>
+          </div>
+          <div style="font-size:13.5px; font-weight:700;">${esc(signals[0].title)}</div>
+          <div style="font-size:12px; color:var(--muted);">${esc(signals[0].text)}</div>
+          <div style="display:flex; gap:7px; flex-wrap:wrap; margin-top:2px;">
+            ${signals[0].fork && signals[0].choice1 ? `
+              <button type="button" class="pill active" style="${signals[0].choice1.cls === 'danger' ? 'background:var(--danger); border-color:var(--danger); color:#fff;' : ''}" data-act="${esc(signals[0].choice1.act)}" ${signals[0].choice1.stageId ? `data-id="${esc(signals[0].choice1.stageId)}"` : ''}>${esc(signals[0].choice1.label)}</button>
+              <button type="button" class="pill" data-act="${esc(signals[0].choice2.act)}" ${signals[0].choice2.id ? `data-id="${esc(signals[0].choice2.id)}"` : ''}>${esc(signals[0].choice2.label)}</button>
+            ` : `
+              <button type="button" class="pill active" data-act="helper-follow-signal" data-idx="0">${esc(signals[0].actionLabel)} →</button>
+            `}
+          </div>
+        </div>
+      ` : ''}
+
+      <div class="seg-bar" style="grid-template-columns:repeat(3, minmax(0, 1fr)); margin-bottom:12px;">
+        <button type="button" class="seg-btn ${hTab === 'screen' ? 'active' : ''}" style="font-size:12px; padding:7px 4px;" data-act="set-helper-tab" data-val="screen">По экрану</button>
+        <button type="button" class="seg-btn ${hTab === 'onb' ? 'active' : ''}" style="font-size:12px; padding:7px 4px;" data-act="set-helper-tab" data-val="onb">7 шагов (${7 - LG3_ONBOARDING_7_DAYS.filter((_,i)=>!comp.done[i]&&!comp.skipped[i]).length}/7)</button>
+        <button type="button" class="seg-btn ${hTab === 'kb' ? 'active' : ''}" style="font-size:12px; padding:7px 4px;" data-act="set-helper-tab" data-val="kb">База смыслов</button>
+      </div>
+
+      ${hTab === 'screen' ? `
+        <div style="display:flex; flex-direction:column; gap:9px;">
+          <div class="card-2">
+            <div style="font-size:14px; font-weight:750; color:var(--accent);">${esc(guide.screenTitle)}</div>
+            <div style="font-size:12.5px; color:var(--muted); margin-top:3px;">${esc(guide.summary)}</div>
+          </div>
+          ${guide.tips.map((tp, tIdx) => `
+            <div class="card-2" style="display:flex; flex-direction:column; gap:6px;">
+              <div style="font-size:13.5px; font-weight:700;">${esc(tp.q)}</div>
+              <div style="font-size:12.5px; color:var(--muted); line-height:1.44;">${esc(tp.a)}</div>
+              ${tp.pulse ? `
+                <div>
+                  <button type="button" class="mini-btn" style="color:var(--accent); border-color:var(--accent-border);" data-act="helper-pulse-tip" data-key="${esc(guideKey)}" data-idx="${tIdx}">Показать где на экране →</button>
+                </div>
+              ` : ''}
+            </div>
+          `).join('')}
+        </div>
+      ` : (hTab === 'onb' ? `
+        <div>
+          <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; color:var(--muted);">
+            <span>День ${curStep.step} из 7 ${isStepDone ? '· ✓ пройдено' : (isStepSkipped ? '· пропущено' : '')}</span>
+            <div style="display:inline-flex; gap:5px;">
+              <button type="button" class="mini-btn" data-act="helper-step-delta" data-d="-1" ${stepViewIdx === 0 ? 'disabled' : ''}>‹ Назад</button>
+              <button type="button" class="mini-btn" data-act="helper-step-delta" data-d="1" ${stepViewIdx === 6 ? 'disabled' : ''}>Дальше ›</button>
+            </div>
+          </div>
+          <div class="onb-progress-bar">
+            ${LG3_ONBOARDING_7_DAYS.map((_, k) => `<span class="onb-seg ${comp.done[k] ? 'done' : (comp.skipped[k] ? 'skipped' : (k === stepViewIdx ? 'current' : ''))}"></span>`).join('')}
+          </div>
+          <div class="card-2" style="display:flex; flex-direction:column; gap:8px;">
+            <div style="font-size:15.5px; font-weight:800;">${esc(curStep.title)}</div>
+            <div style="font-size:12px; color:var(--accent);">${esc(curStep.subtitle)}</div>
+            <div style="font-size:13px; color:var(--text); line-height:1.46;">${esc(curStep.body)}</div>
+            ${curStep.hasFittingRoom ? `
+              <div style="border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:7px;">
+                <div style="font-size:11.5px; font-weight:700; color:var(--muted);">1. Выбери близкого по смыслу спутника:</div>
+                <div class="pills" style="gap:6px;">
+                  ${LG3_COMPANION_ARCHETYPES.map(a => `
+                    <button type="button" class="pill ${curArch.id === a.id ? 'active' : ''}" data-act="set-companion-archetype" data-val="${esc(a.id)}">${esc(a.name)}</button>
+                  `).join('')}
+                </div>
+                <div style="font-size:11.5px; font-weight:700; color:var(--muted);">2. Примерь 3 спокойных состояния (переключаются в любой день без штрафов):</div>
+                <div class="pills" style="gap:6px;">
+                  <button type="button" class="pill ${curPost === 'lite' ? 'active' : ''}" data-act="fitting-apply-mode" data-val="lite">🌱 Налегке (Базовый)</button>
+                  <button type="button" class="pill ${curPost === 'pro' ? 'active' : ''}" data-act="fitting-apply-mode" data-val="pro">🧭 Орден Pro (Полный)</button>
+                  <button type="button" class="pill ${curPost === 'rest' ? 'active' : ''}" data-act="fitting-apply-mode" data-val="rest">🌙 Отдых (Пауза)</button>
+                </div>
+              </div>
+            ` : ''}
+            ${curStep.hasMobilizationDemo ? `
+              <div style="border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:6px;">
+                <div style="font-size:11.5px; color:var(--muted);">Посмотри, как спутник ведёт себя в Мобилизации (на 5-й день устаёт рядом с тобой и спрашивает, жмём ли дальше):</div>
+                <div class="pills" style="gap:6px;">
+                  <button type="button" class="pill ${curPost === 'tired' ? 'active' : ''}" data-act="preview-companion-posture" data-val="tired">😓 5-й день: перевести дух?</button>
+                  <button type="button" class="pill ${curPost === 'fierce' ? 'active' : ''}" data-act="preview-companion-posture" data-val="fierce">🔥 Нет, жмём дальше!</button>
+                  <button type="button" class="pill ${curPost === 'rest' ? 'active' : ''}" data-act="preview-companion-posture" data-val="rest">🌿 Да, выдыхаем</button>
+                </div>
+              </div>
+            ` : ''}
+            <div style="display:flex; gap:7px; flex-wrap:wrap; margin-top:4px;">
+              <button type="button" class="btn-primary" style="padding:8px 13px; font-size:12.5px;" data-act="helper-go-step" data-idx="${stepViewIdx}">${esc(curStep.actionLabel)} →</button>
+              ${(isStepDone || isStepSkipped) ? `
+                <button type="button" class="btn-ghost" style="padding:8px 12px; font-size:12px;" data-act="helper-mark-step" data-idx="${stepViewIdx}" data-how="reset">Вернуть шаг</button>
+              ` : `
+                <button type="button" class="btn-ghost" style="padding:8px 12px; font-size:12px;" data-act="helper-mark-step" data-idx="${stepViewIdx}" data-how="done">✓ Сделано</button>
+                <button type="button" class="mini-btn" data-act="helper-mark-step" data-idx="${stepViewIdx}" data-how="skip">Пропустить</button>
+              `}
+            </div>
+          </div>
+          ${comp.homeMinimized && nextOnb >= 0 ? `
+            <div style="margin-top:9px; text-align:right;">
+              <button type="button" class="mini-btn" data-act="restore-home-helper">Показывать карточку шага на Главной</button>
+            </div>
+          ` : ''}
+        </div>
+      ` : `
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <input id="lg3KbSearch" class="field" placeholder="Найти правило или понятие (напр. Оптимум, R2, очередь)..." value="${esc(UI3.kbSearch || '')}" data-input="lg3-kb-search"/>
+          ${filteredCards.map(card => `
+            <div class="card-2" style="display:flex; flex-direction:column; gap:4px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <strong style="font-size:13.5px;">${esc(card.title)}</strong>
+                <span style="font-size:10.5px; color:var(--accent);">${esc(card.tag)}</span>
+              </div>
+              <div style="font-size:12.5px; color:var(--muted); line-height:1.44;">${esc(card.text)}</div>
+            </div>
+          `).join('')}
+        </div>
+      `)}
     `;
   } else if (m.name === 'return-bridge') {
     content = `

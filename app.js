@@ -19,6 +19,11 @@ const UI3 = {
   reviewSub: 'evening',
   settingsTab: 'general',
   searchText: '',
+  kbSearch: '',
+  helperTab: '',
+  helperStepIdx: null,
+  edgeBubbleOpen: false,
+  previewPosture: null,
   sparkIndex: 0,
   eveningMood: 'calm',
   eveningDraft: '',
@@ -57,6 +62,8 @@ const UI3 = {
     ifAction: ''
   }
 };
+
+window.UI3 = UI3;
 
 function activeStorageKey() {
   return UI3.space === 'my' ? LG3_KEYS.my : LG3_KEYS.demo;
@@ -163,6 +170,9 @@ function commitMutation(mutatorFn, opts) {
   }
 
   LG3_STATES[UI3.space] = res.state;
+  if (opts.sound === 'coin' && window.LG3CompanionAvatar) {
+    window.LG3CompanionAvatar.celebrate();
+  }
   applyThemeAndWidth(res.state);
   renderApp();
   if (opts.toast) {
@@ -175,6 +185,54 @@ function applyThemeAndWidth(state) {
   const theme = (state && state.settings && state.settings.theme) || 'night';
   document.documentElement.setAttribute('data-theme', theme);
   document.body.classList.toggle('wide-shell', !!UI3.wide);
+}
+
+function navigateAndPulseSelector(targetRoute, selector, optBlockId, optStageId) {
+  UI3.modal = null;
+  if (targetRoute === 'block') {
+    const st = getState();
+    const blk = (optBlockId && st.blocks.find(b => b.id === optBlockId && !b.archivedAt))
+      || (UI3.activeBlockId && st.blocks.find(b => b.id === UI3.activeBlockId && !b.archivedAt))
+      || st.blocks.find(b => b.id === 'b_guitar' && !b.archivedAt)
+      || st.blocks.find(b => !b.archivedAt);
+    if (blk) {
+      if (st.complexity === 'basic') {
+        commitMutation(d => { d.complexity = 'full'; });
+      }
+      UI3.activeBlockId = blk.id;
+      UI3.inspectStageId = optStageId || blk.currentStageId;
+      UI3.blockTab = 'current';
+      UI3.route = 'block';
+    } else {
+      UI3.route = 'blocks';
+    }
+    renderApp();
+  } else if (targetRoute) {
+    if (getState().complexity === 'basic' && (targetRoute === 'blocks' || targetRoute === 'map-overview')) {
+      commitMutation(d => { d.complexity = 'full'; });
+    }
+    navigateTo(targetRoute);
+  } else {
+    renderApp();
+  }
+
+  if (!selector) return;
+  setTimeout(() => {
+    const parts = selector.split(',').map(s => s.trim()).filter(Boolean);
+    let scrolled = false;
+    parts.forEach(sel => {
+      try {
+        const el = document.querySelector(sel);
+        if (!el) return;
+        el.classList.add('lg3-helper-pulse');
+        if (!scrolled) {
+          scrolled = true;
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+        setTimeout(() => el.classList.remove('lg3-helper-pulse'), 4400);
+      } catch (e) {}
+    });
+  }, 110);
 }
 
 function navigateTo(route, sub) {
@@ -257,6 +315,92 @@ function renderCurrentRoute(state) {
   }
 }
 
+
+function renderOffscreenCompanionDock(state) {
+  if (!state || !state.companion || state.companion.enabled === false || UI3.modal) return '';
+  const comp = state.companion;
+  const arch = getCompanionArchetype(comp.archetype);
+  const w = calcWallet(state);
+  const posture = resolveCompanionPosture(state, UI3.previewPosture);
+  const sigs = evaluateCompanionSignals(state);
+  const topSig = sigs[0] || null;
+  const isBasic = state.complexity === 'basic';
+  const hasTimer = !!state.focusTimer;
+
+  if (comp.tucked) {
+    return `
+      <div class="lg3-offscreen-companion is-tucked ${isBasic ? 'in-basic' : ''} ${hasTimer ? 'with-timer' : ''}" id="lg3-companion-mount" data-companion-state="tucked" data-act="toggle-companion-tuck" title="Развернуть спутника (${esc(arch.name)})">
+        <span style="font-size:13px; color:var(--accent); font-weight:800;">‹</span>
+        ${topSig ? `<span class="lg3-edge-signal-badge ${topSig.id.includes('red') ? 'is-red' : ''}"></span>` : ''}
+      </div>
+    `;
+  }
+
+  const customSheet = LG3CompanionAvatar.getCustomSprite();
+  const postureIdxMap = { lite: 0, pro: 1, tired: 2, fierce: 3, rest: 4 };
+  const slicePos = (postureIdxMap[posture] ?? 1) * 25;
+  const stageVisual = customSheet
+    ? `<div class="lg3-custom-sprite-slice" style="background-image:url('${customSheet}'); background-position:${slicePos}% 50%;"></div>`
+    : `<svg id="lg3OffscreenSvg" viewBox="0 0 112 108" width="100%" height="100%" aria-hidden="true">${LG3CompanionAvatar.renderSVGContent({ archetype: arch.id, posture, xpLevel: w.level, careCount: countRedCareDone(state), joyful: false, withPaws: true }, performance.now() * 0.001)}</svg>`;
+
+  let bubbleHtml = '';
+  if (UI3.edgeBubbleOpen) {
+    const nextOnb = getNextOnboardingIdx(state);
+    bubbleHtml = `
+      <div class="lg3-edge-bubble ${topSig && topSig.id.includes('red') ? 'is-red' : ''}" data-stop-bubble="1">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
+          <span style="font-size:11px; font-weight:800; color:var(--accent); letter-spacing:0.05em; text-transform:uppercase;">${esc(arch.name)} · Ур. ${w.level}</span>
+          <div style="display:inline-flex; gap:4px;">
+            <button type="button" class="mini-btn" style="padding:2px 6px; font-size:10.5px;" data-act="toggle-companion-tuck" title="Убрать за край экрана">За край</button>
+            <button type="button" class="mini-btn" style="padding:2px 6px; font-size:10.5px;" data-act="close-edge-bubble">✕</button>
+          </div>
+        </div>
+
+        ${topSig ? `
+          <div style="font-size:13px; font-weight:750; line-height:1.3;">${esc(topSig.title)}</div>
+          <div style="font-size:12px; color:var(--muted); line-height:1.38;">${esc(topSig.text)}</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            ${topSig.fork && topSig.choice1 ? `
+              <button type="button" class="pill active" style="font-size:11.5px; padding:5px 9px; ${topSig.choice1.cls === 'danger' ? 'background:var(--danger); border-color:var(--danger); color:#fff;' : ''}" data-act="${esc(topSig.choice1.act)}" ${topSig.choice1.stageId ? `data-id="${esc(topSig.choice1.stageId)}"` : ''}>${esc(topSig.choice1.label)}</button>
+              <button type="button" class="pill" style="font-size:11.5px; padding:5px 9px;" data-act="${esc(topSig.choice2.act)}" ${topSig.choice2.id ? `data-id="${esc(topSig.choice2.id)}"` : ''}>${esc(topSig.choice2.label)}</button>
+            ` : `
+              <button type="button" class="pill active" style="font-size:11.5px; padding:5px 9px;" data-act="helper-follow-signal">${esc(topSig.actionLabel)} →</button>
+            `}
+          </div>
+          <div style="border-top:1px solid var(--border); padding-top:6px; margin-top:2px;">
+            <button type="button" class="mini-btn" style="color:var(--accent); border-color:var(--accent-border); width:100%; justify-content:center;" data-act="open-helper">
+              ${nextOnb >= 0 ? `Открыть День ${nextOnb + 1} из 7 и подсказки →` : 'Гид по экрану и база смыслов →'}
+            </button>
+          </div>
+        ` : `
+          <div style="font-size:12.5px; line-height:1.38;">«${esc(arch.voices[posture] || arch.voices.pro)}»</div>
+          <div class="pills" style="gap:4px;">
+            <button type="button" class="pill ${posture === 'lite' ? 'active' : ''}" style="font-size:10.5px; padding:3px 7px;" data-act="fitting-apply-mode" data-val="lite">Налегке</button>
+            <button type="button" class="pill ${posture === 'pro' ? 'active' : ''}" style="font-size:10.5px; padding:3px 7px;" data-act="fitting-apply-mode" data-val="pro">Pro</button>
+            <button type="button" class="pill ${state.specialMode === 'red' ? 'active' : ''}" style="font-size:10.5px; padding:3px 7px;" data-act="set-special-mode" data-val="${state.specialMode === 'red' ? 'none' : 'red'}">🔴 Рывок</button>
+            <button type="button" class="pill ${posture === 'rest' ? 'active' : ''}" style="font-size:10.5px; padding:3px 7px;" data-act="fitting-apply-mode" data-val="rest">Отдых</button>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; padding-top:2px;">
+            <button type="button" class="mini-btn" style="color:var(--accent); border-color:var(--accent-border); width:100%; justify-content:center;" data-act="open-helper">
+              ${nextOnb >= 0 ? `Открыть День ${nextOnb + 1} из 7 и подсказки →` : 'Гид по экрану и база смыслов →'}
+            </button>
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="lg3-offscreen-companion ${isBasic ? 'in-basic' : ''} ${hasTimer ? 'with-timer' : ''}" id="lg3-companion-mount" data-companion-state="${esc(posture)}">
+      ${bubbleHtml}
+      <div class="lg3-companion-stage-inner" data-act="toggle-edge-bubble" title="${esc(arch.name)} — нажми для диалога">
+        ${stageVisual}
+        ${topSig && !UI3.edgeBubbleOpen ? `<span class="lg3-edge-signal-badge ${topSig.id.includes('red') ? 'is-red' : ''}"></span>` : ''}
+      </div>
+    </div>
+  `;
+}
+
 function renderApp() {
   const state = getState();
   if (!state) return;
@@ -303,20 +447,35 @@ function renderApp() {
   if (!root) return;
 
   root.innerHTML = `
+    <div class="lg3-shell-rig">
     <div class="app-shell ${isBasic ? 'basic-mode' : ''} ${ft ? 'has-minitimer' : ''}">
       <header class="top-header">
         <div class="header-left">
-          ${showBack ? `<button type="button" class="back-chip" data-act="nav-back">← Назад</button>` : ''}
-          <button type="button" class="brand-btn" data-act="go" data-route="home" aria-label="На главную">
-            <span class="brand-dot"></span>
-            <span>LIFE GAME</span>
-          </button>
+          ${showBack ? `
+            <button type="button" class="back-chip" data-act="nav-back">← Назад</button>
+          ` : `
+            <button type="button" class="brand-btn" data-act="go" data-route="home" aria-label="На главную">
+              <span class="brand-dot"></span>
+              <span>LIFE GAME</span>
+            </button>
+          `}
         </div>
 
         <div class="header-right">
           <button type="button" class="mode-pill ${isBasic ? 'is-basic' : ''}" data-act="toggle-complexity-quick" title="Переключить Базовый / Полный режим">
             ${isBasic ? 'Базовый' : 'Полный'}
           </button>
+          ${state.companion?.enabled !== false ? (() => {
+            const nextOnb = getNextOnboardingIdx(state);
+            const sigs = evaluateCompanionSignals(state);
+            return `
+              <button type="button" class="helper-pill ${nextOnb >= 0 ? 'onboarding-active' : ''}" data-act="open-helper" title="Помощник и база подсказок">
+                ${LG3_COMPANION_ICON}
+                <span>${nextOnb >= 0 ? `${nextOnb + 1}/7` : '?'}</span>
+                ${sigs.length > 0 ? '<span class="helper-signal-dot"></span>' : ''}
+              </button>
+            `;
+          })() : ''}
           <button type="button" class="wallet-pill ${w.coins < 0 ? 'negative' : ''}" data-act="go" data-route="bonuses" title="Монеты и награды">
             <span>${w.coins}</span><span>●</span>
           </button>
@@ -335,6 +494,8 @@ function renderApp() {
       <main style="flex:1; display:flex; flex-direction:column;">
         ${renderCurrentRoute(state)}
       </main>
+    </div>
+    ${renderOffscreenCompanionDock(state)}
     </div>
 
     ${ft ? `
@@ -753,6 +914,7 @@ function handleAction(act, btn, event) {
           active: true,
           blockId: item.blockId || null
         });
+        if (draft.companion) draft.companion.done[0] = true;
         if (rewardCoins > 0 || rewardXp > 0) {
           draft.ledger.push({
             id: uid('led'),
@@ -907,8 +1069,12 @@ function handleAction(act, btn, event) {
           }
         } else {
           const createdId = uid('it');
+          const maxStgOrd = draft.items
+            .filter(x => x.stageId && x.stageId === (f.blockId ? (f.stageId || null) : null))
+            .reduce((m, x) => Math.max(m, Number(x.stageOrder) || 0), 0);
           draft.items.push({
             id: createdId,
+            stageOrder: maxStgOrd + 1,
             kind: f.kind,
             title,
             description: '',
@@ -1351,6 +1517,7 @@ function handleAction(act, btn, event) {
       commitMutation(draft => {
         const b = draft.blocks.find(x => x.id === id);
         if (b) b.fact = txt;
+        if (draft.companion) draft.companion.done[3] = true;
       }, { toast: 'Фактическое состояние сохранено' });
       UI3.modal = null;
       renderApp();
@@ -1609,6 +1776,7 @@ function handleAction(act, btn, event) {
     case 'set-reward-target': {
       commitMutation(draft => {
         draft.rewardTargetId = id;
+        if (draft.companion) draft.companion.done[1] = true;
       }, { toast: 'Выбрано как «Моя награда» на Главной ✦' });
       return;
     }
@@ -1812,6 +1980,7 @@ function handleAction(act, btn, event) {
       UI3.modal = null;
       commitMutation(draft => {
         const ft = draft.focusTimer;
+        if (draft.companion) draft.companion.done[2] = true;
         draft.timeSessions.push({
           id: uid('ts'),
           itemId: ft ? ft.itemId : null,
@@ -1908,6 +2077,7 @@ function handleAction(act, btn, event) {
       const note = (UI3.eveningDraft || '').trim() || 'Спокойное завершение дня.';
       const reply = pickEveningReplyV3(state, UI3.eveningMood);
       commitMutation(draft => {
+        if (draft.companion) draft.companion.done[6] = true;
         draft.reviews.push({
           id: uid('rev'),
           scale: 'daily',
@@ -1955,13 +2125,29 @@ function handleAction(act, btn, event) {
     }
 
     case 'set-special-mode': {
+      UI3.previewPosture = null;
       commitMutation(draft => {
         draft.specialMode = val;
-        if (val === 'red' && !draft.redBlockId) {
-          const firstBlk = draft.blocks.find(b => !b.archivedAt);
-          if (firstBlk) draft.redBlockId = firstBlk.id;
+        draft.companion = draft.companion || {};
+        if (val === 'red') {
+          if (!draft.redBlockId) {
+            const firstBlk = draft.blocks.find(b => !b.archivedAt);
+            if (firstBlk) draft.redBlockId = firstBlk.id;
+          }
+          draft.companion.redDaysCount = Math.max(1, Number(draft.companion.redDaysCount) || 1);
+          draft.companion.done[6] = true;
+        } else {
+          draft.companion.redDaysCount = 0;
+          draft.companion.redExtendedUntil = null;
+          draft.companion.fierceUntilDate = null;
         }
-      }, { toast: val === 'pause' ? 'Включена Творческая пауза' : (val === 'red' ? 'Включена мобилизация на 1 блоке' : 'Обычный ход восстановлен') });
+        if (val === 'pause') {
+          draft.companion.pauseDaysCount = Math.max(1, Number(draft.companion.pauseDaysCount) || 1);
+        } else {
+          draft.companion.pauseDaysCount = 0;
+          draft.companion.pauseQuietUntil = null;
+        }
+      }, { toast: val === 'pause' ? 'Включена Творческая пауза' : (val === 'red' ? 'Включена мобилизация на 1 блоке 🔴' : 'Обычный ход восстановлен') });
       return;
     }
 
@@ -2142,12 +2328,385 @@ function handleAction(act, btn, event) {
       return;
     }
 
+    case 'set-stage-feed': {
+      commitMutation(draft => {
+        const st = draft.stages.find(s => s.id === id);
+        if (st) st.feedMode = val === 'one' ? 'one' : 'all';
+        if (draft.companion && val === 'one') draft.companion.done[4] = true;
+      }, {
+        sound: 'soft',
+        toast: val === 'one'
+          ? 'Включён режим «По одному шагу»: в День уходит только шаг №1 очереди'
+          : 'Включён показ всех выбранных действий этапа'
+      });
+      return;
+    }
+
+    case 'move-stage-item-order': {
+      const dir = Number(btn.getAttribute('data-dir')) || 1;
+      commitMutation(draft => {
+        const targetItem = draft.items.find(i => i.id === id);
+        if (!targetItem || !targetItem.stageId) return;
+        const peers = draft.items
+          .filter(x => x.stageId === targetItem.stageId && isConveyorQueueTask(x) && !isOneOffEverDoneInCurrentCycle(draft, x))
+          .sort((a, b) => (Number(a.stageOrder) || 0) - (Number(b.stageOrder) || 0));
+        const idx = peers.findIndex(p => p.id === id);
+        const swapIdx = idx + dir;
+        if (idx < 0 || swapIdx < 0 || swapIdx >= peers.length) return;
+        const tmp = peers[idx];
+        peers[idx] = peers[swapIdx];
+        peers[swapIdx] = tmp;
+        peers.forEach((p, i) => { p.stageOrder = i + 1; });
+      }, { sound: 'soft', toast: 'Порядок очереди шагов обновлён' });
+      return;
+    }
+
+    case 'open-helper': {
+      syncDraftInputsFromDOM();
+      UI3.edgeBubbleOpen = false;
+      const nextOnb = getNextOnboardingIdx(state);
+      UI3.helperTab = nextOnb >= 0 ? 'onb' : 'screen';
+      UI3.helperStepIdx = nextOnb >= 0 ? nextOnb : 0;
+      UI3.modal = { name: 'companion' };
+      renderApp();
+      return;
+    }
+
+    case 'set-helper-tab': {
+      UI3.helperTab = val;
+      renderApp();
+      return;
+    }
+
+    case 'helper-step-delta': {
+      const d = Number(btn.getAttribute('data-d')) || 1;
+      const cur = typeof UI3.helperStepIdx === 'number' ? UI3.helperStepIdx : Math.max(0, getNextOnboardingIdx(state));
+      UI3.helperStepIdx = Math.max(0, Math.min(6, cur + d));
+      UI3.helperTab = 'onb';
+      renderApp();
+      return;
+    }
+
+    case 'helper-mark-step': {
+      const idx = Number(btn.getAttribute('data-idx'));
+      const how = btn.getAttribute('data-how') || 'done';
+      if (isNaN(idx) || idx < 0 || idx > 6) return;
+      commitMutation(draft => {
+        draft.companion = draft.companion || { enabled: true, done: {}, skipped: {} };
+        if (how === 'done') {
+          draft.companion.done[idx] = true;
+          delete draft.companion.skipped[idx];
+        } else if (how === 'skip') {
+          draft.companion.skipped[idx] = true;
+        } else {
+          delete draft.companion.done[idx];
+          delete draft.companion.skipped[idx];
+        }
+      }, { sound: how === 'done' ? 'soft' : null, toast: how === 'done' ? `Шаг ${idx + 1} из 7 отмечен ✓` : (how === 'skip' ? 'Шаг отложен' : 'Шаг возвращён') });
+      const freshNext = getNextOnboardingIdx(getState());
+      UI3.helperStepIdx = freshNext >= 0 ? freshNext : idx;
+      renderApp();
+      return;
+    }
+
+    case 'helper-go-step': {
+      const idx = Number(btn.getAttribute('data-idx')) || 0;
+      const stObj = LG3_ONBOARDING_7_DAYS[idx];
+      if (!stObj) return;
+      navigateAndPulseSelector(stObj.route, stObj.pulseSelector);
+      return;
+    }
+
+    case 'helper-pulse-tip': {
+      const gKey = btn.getAttribute('data-key') || 'home';
+      const tIdx = Number(btn.getAttribute('data-idx')) || 0;
+      const tip = LG3_SCREEN_GUIDES[gKey]?.tips?.[tIdx];
+      if (!tip) return;
+      navigateAndPulseSelector(tip.route || gKey, tip.pulse);
+      return;
+    }
+
+    case 'helper-follow-signal': {
+      const sigs = evaluateCompanionSignals(state);
+      const s0 = sigs[0];
+      if (!s0) return;
+      navigateAndPulseSelector(s0.route, s0.pulse, s0.blockId, s0.stageId);
+      return;
+    }
+
+    case 'dismiss-helper-signal': {
+      commitMutation(draft => {
+        draft.companion.dismissedOnDate = draft.companion.dismissedOnDate || {};
+        draft.companion.dismissedOnDate[draft.lastDay] = draft.companion.dismissedOnDate[draft.lastDay] || [];
+        if (id && !draft.companion.dismissedOnDate[draft.lastDay].includes(id)) {
+          draft.companion.dismissedOnDate[draft.lastDay].push(id);
+        }
+      });
+      return;
+    }
+
+    case 'minimize-home-helper': {
+      commitMutation(draft => {
+        draft.companion.homeMinimized = true;
+      }, { toast: 'Помощник свёрнут в шапку — открыть можно в любой момент' });
+      return;
+    }
+
+    case 'restore-home-helper': {
+      commitMutation(draft => {
+        draft.companion.homeMinimized = false;
+      }, { toast: 'Карточка шага снова видна на Главной' });
+      return;
+    }
+
+    case 'toggle-companion-enabled': {
+      commitMutation(draft => {
+        draft.companion.enabled = draft.companion.enabled === false;
+      }, { toast: getState().companion?.enabled === false ? 'Помощник включён' : 'Кнопка Помощника скрыта (вернуть можно здесь же в Настройках)' });
+      return;
+    }
+
     case 'switch-to-basic-welcome': {
       UI3.modal = null;
       commitMutation(draft => {
         draft.complexity = 'basic';
         draft.basicFreeze = true;
+        if (draft.companion) draft.companion.lastReturnGap = 0;
       }, { toast: 'Включён бережный Базовый ритм 🌱' });
+      return;
+    }
+
+    case 'toggle-edge-bubble': {
+      UI3.edgeBubbleOpen = !UI3.edgeBubbleOpen;
+      renderApp();
+      return;
+    }
+
+    case 'close-edge-bubble': {
+      UI3.edgeBubbleOpen = false;
+      renderApp();
+      return;
+    }
+
+    case 'toggle-companion-tuck': {
+      UI3.edgeBubbleOpen = false;
+      const nextTucked = !state.companion?.tucked;
+      commitMutation(draft => {
+        draft.companion.tucked = nextTucked;
+      }, { toast: nextTucked ? 'Спутник свернулся за край рамки' : 'Спутник снова выглядывает у кромки' });
+      return;
+    }
+
+    case 'set-companion-archetype': {
+      if (!val) return;
+      UI3.previewPosture = null;
+      commitMutation(draft => {
+        draft.companion.archetype = val;
+      }, { sound: 'soft', toast: `Твой спутник теперь — ${getCompanionArchetype(val).name} ✨` });
+      return;
+    }
+
+    case 'preview-companion-posture': {
+      UI3.previewPosture = val || null;
+      renderApp();
+      return;
+    }
+
+    case 'fitting-apply-mode': {
+      UI3.previewPosture = null;
+      commitMutation(draft => {
+        draft.companion.done[0] = true;
+        if (val === 'lite') {
+          draft.complexity = 'basic';
+          draft.basicFreeze = true;
+          draft.specialMode = 'none';
+        } else if (val === 'rest') {
+          draft.specialMode = 'pause';
+          draft.companion.pauseDaysCount = 1;
+        } else {
+          draft.complexity = 'full';
+          draft.specialMode = 'none';
+        }
+      }, {
+        sound: 'soft',
+        toast: val === 'lite' ? 'Режим «Налегке» (Базовый) включён 🌱' : (val === 'rest' ? 'Включён бережный режим отдыха 🌙' : 'Включён Полный режим (Орден Pro) 🧭')
+      });
+      return;
+    }
+
+    case 'simulate-red-day5': {
+      UI3.previewPosture = null;
+      UI3.modal = null;
+      UI3.edgeBubbleOpen = true;
+      commitMutation(draft => {
+        draft.specialMode = 'red';
+        if (!draft.redBlockId) {
+          const fb = draft.blocks.find(b => !b.archivedAt);
+          if (fb) draft.redBlockId = fb.id;
+        }
+        draft.companion.tucked = false;
+        draft.companion.redDaysCount = 5;
+        draft.companion.redExtendedUntil = null;
+        draft.companion.fierceUntilDate = null;
+        if (draft.companion.dismissedOnDate && draft.companion.dismissedOnDate[draft.lastDay]) {
+          draft.companion.dismissedOnDate[draft.lastDay] = draft.companion.dismissedOnDate[draft.lastDay].filter(x => x !== 'sig_red_fatigue');
+        }
+      }, { sound: 'soft', toast: 'Симуляция 5-го дня Мобилизации: спутник спрашивает у края экрана!' });
+      return;
+    }
+
+    case 'companion-fork-red-push': {
+      UI3.previewPosture = null;
+      UI3.modal = null;
+      UI3.edgeBubbleOpen = false;
+      commitMutation(draft => {
+        const until = shiftLocalDays(draft.lastDay, 3);
+        draft.companion.redExtendedUntil = until;
+        draft.companion.fierceUntilDate = until;
+      }, { sound: 'coin', toast: 'Закатали рукава — держим собранный строй ещё на 3 дня! 🔥' });
+      return;
+    }
+
+    case 'companion-fork-red-rest': {
+      UI3.modal = null;
+      UI3.edgeBubbleOpen = false;
+      UI3.previewPosture = 'rest';
+      commitMutation(draft => {
+        draft.specialMode = 'none';
+        draft.companion.redDaysCount = 0;
+        draft.companion.redExtendedUntil = null;
+        draft.companion.fierceUntilDate = null;
+      }, { sound: 'soft', undoable: true, toast: 'Фух, спокойно выдохнули — возвращён обычный ритм без перегрева 🌿' });
+      setTimeout(() => {
+        if (UI3.previewPosture === 'rest') {
+          UI3.previewPosture = null;
+          renderApp();
+        }
+      }, 3200);
+      return;
+    }
+
+    case 'companion-fork-light-care': {
+      UI3.edgeBubbleOpen = false;
+      commitMutation(draft => {
+        draft.redCare = draft.redCare || { sleep: false, water: false, rest: false };
+        draft.redCare.water = true;
+        draft.redCare.rest = true;
+      }, { sound: 'coin', toast: 'Огоньки Воды и Выдоха зажжены — база под защитой! 💧🌿' });
+      return;
+    }
+
+    case 'companion-fork-return-full': {
+      UI3.modal = null;
+      UI3.edgeBubbleOpen = false;
+      commitMutation(draft => {
+        draft.complexity = 'full';
+        draft.specialMode = 'none';
+        draft.companion.lastReturnGap = 0;
+        draft.companion.fierceUntilDate = draft.lastDay;
+      }, { sound: 'coin', toast: 'С возвращением в полный строй! 🧭' });
+      return;
+    }
+
+    case 'companion-fork-return-lite': {
+      UI3.modal = null;
+      UI3.edgeBubbleOpen = false;
+      commitMutation(draft => {
+        draft.complexity = 'basic';
+        draft.basicFreeze = true;
+        draft.specialMode = 'none';
+        draft.carryovers = [];
+        draft.companion.lastReturnGap = 0;
+      }, { sound: 'soft', undoable: true, toast: 'Мягкий вход налегке: старые хвосты убраны 🌱' });
+      return;
+    }
+
+    case 'companion-fork-pause-2min': {
+      UI3.modal = null;
+      UI3.edgeBubbleOpen = false;
+      commitMutation(draft => {
+        draft.specialMode = 'none';
+        draft.companion.pauseDaysCount = 0;
+        draft.focusTimer = {
+          itemId: null,
+          itemName: 'Мягкий вход (2 минуты)',
+          blockId: null,
+          targetMin: 2,
+          elapsedSec: 0,
+          status: 'running',
+          lastTickMs: Date.now()
+        };
+      }, { sound: 'coin', toast: 'Запущен лёгкий шаг на 2 минуты ▶' });
+      return;
+    }
+
+    case 'companion-fork-pause-stay': {
+      UI3.modal = null;
+      UI3.edgeBubbleOpen = false;
+      commitMutation(draft => {
+        draft.companion.pauseQuietUntil = shiftLocalDays(draft.lastDay, 3);
+      }, { sound: 'soft', toast: 'Спокойно отдыхаем дальше — напомню через пару дней 🌙' });
+      return;
+    }
+
+    case 'companion-fork-overload-keep': {
+      UI3.modal = null;
+      UI3.edgeBubbleOpen = false;
+      commitMutation(draft => {
+        draft.companion.dismissedOnDate = draft.companion.dismissedOnDate || {};
+        draft.companion.dismissedOnDate[draft.lastDay] = draft.companion.dismissedOnDate[draft.lastDay] || [];
+        if (!draft.companion.dismissedOnDate[draft.lastDay].includes('sig_overload_day')) {
+          draft.companion.dismissedOnDate[draft.lastDay].push('sig_overload_day');
+        }
+        draft.companion.fierceUntilDate = draft.lastDay;
+      }, { sound: 'coin', toast: 'Уважение! Держу боевой строй рядом 🔥' });
+      return;
+    }
+
+    case 'companion-fork-overload-slim': {
+      UI3.modal = null;
+      UI3.edgeBubbleOpen = false;
+      commitMutation(draft => {
+        const plan = assembleDayPlan(draft, draft.lastDay);
+        const dRec = ensureDayObj(draft, draft.lastDay);
+        const openItems = plan.visible.filter(x => !x.prog.done).map(x => x.item);
+        let kept = 0;
+        openItems.forEach(it => {
+          const mustKeep = it.kind === 'calendar' || it.id === dRec.mainItemId || it.isKey;
+          if (mustKeep || kept < 3) {
+            kept++;
+          } else if (!dRec.excludes.includes(it.id)) {
+            dRec.excludes.push(it.id);
+          }
+        });
+      }, { sound: 'soft', undoable: true, toast: 'День бережно разгружен до главных опор (можно отменить) 🌿' });
+      return;
+    }
+
+    case 'companion-fork-enable-one': {
+      UI3.modal = null;
+      UI3.edgeBubbleOpen = false;
+      commitMutation(draft => {
+        const stg = draft.stages.find(s => s.id === id);
+        if (stg) stg.feedMode = 'one';
+        draft.companion.done[4] = true;
+      }, { sound: 'coin', toast: 'Включена подача «По одному шагу» ✓' });
+      return;
+    }
+
+    case 'companion-fork-clear-carryovers': {
+      UI3.modal = null;
+      UI3.edgeBubbleOpen = false;
+      commitMutation(draft => {
+        draft.carryovers = [];
+      }, { sound: 'soft', undoable: true, toast: 'Вчерашние хвосты спокойно убраны в запас 🌿' });
+      return;
+    }
+
+    case 'reset-custom-sprite': {
+      LG3CompanionAvatar.setCustomSprite(null);
+      renderApp();
+      showToast('Возвращён встроенный цветной векторный вид спутников', false);
       return;
     }
   }
@@ -2236,6 +2795,23 @@ function handleChange(chg, el) {
       renderApp();
       return;
 
+    case 'upload-custom-sprite': {
+      const file = el.files && el.files[0];
+      if (!file) return;
+      if (file.size > 1800000) {
+        showToast('Выбери сжатую картинку до 1.8 МБ, чтобы не переполнить память браузера', false);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const ok = LG3CompanionAvatar.setCustomSprite(String(reader.result || ''));
+        renderApp();
+        showToast(ok ? 'Твой спрайт-лист 1×5 подключён к спутнику! ✨' : 'Не удалось сохранить спрайт в память браузера', false);
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+
     case 'import-file-pick': {
       const file = el.files && el.files[0];
       if (!file) return;
@@ -2318,6 +2894,17 @@ function initLifeGameV3() {
   document.addEventListener('input', (ev) => {
     const target = ev.target.closest('[data-input]');
     if (!target) return;
+    if (target.getAttribute('data-input') === 'lg3-kb-search') {
+      const pos = target.selectionStart || 0;
+      UI3.kbSearch = target.value;
+      renderApp();
+      const restored = document.getElementById('lg3KbSearch');
+      if (restored) {
+        restored.focus();
+        try { restored.setSelectionRange(pos, pos); } catch (e) {}
+      }
+      return;
+    }
     if (target.getAttribute('data-input') === 'lg3-search') {
       const pos = target.selectionStart || 0;
       UI3.searchText = target.value;
@@ -2352,8 +2939,33 @@ function initLifeGameV3() {
     }
   });
 
+  if (LG3_STATES.my.companion && !LG3_STATES.my.companion.activeDates.includes(realToday)) {
+    const rUpd = transactV3(LG3_KEYS.my, LG3_STATES.my, d => {
+      d.companion.activeDates.push(realToday);
+      d.companion.unlockedIdx = Math.min(6, d.companion.activeDates.length - 1);
+    }, { autoToday: false });
+    if (rUpd.ok) LG3_STATES.my = rUpd.state;
+  }
+  document.addEventListener('focusin', (ev) => {
+    const tag = ev.target && ev.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') {
+      document.body.classList.add('is-typing-input');
+    }
+  });
+  document.addEventListener('focusout', () => {
+    setTimeout(() => {
+      const activeTag = document.activeElement && document.activeElement.tagName;
+      if (activeTag !== 'INPUT' && activeTag !== 'TEXTAREA') {
+        document.body.classList.remove('is-typing-input');
+      }
+    }, 80);
+  });
+
   renderApp();
   startLiveTimerLoop();
+  if (window.LG3CompanionAvatar) {
+    window.LG3CompanionAvatar.startLoop(getState);
+  }
 }
 
 window.addEventListener('DOMContentLoaded', initLifeGameV3);

@@ -156,6 +156,41 @@ function normalizeStateV3(s) {
   s.moments = Array.isArray(s.moments) ? s.moments : [];
   s.reviews = Array.isArray(s.reviews) ? s.reviews : [];
   s.snapshots = Array.isArray(s.snapshots) ? s.snapshots : [];
+  s.companion = Object.assign({
+    enabled: true,
+    archetype: 'wayfarer',
+    tucked: false,
+    homeMinimized: false,
+    done: {},
+    skipped: {},
+    activeDates: [s.lastDay || localTodayISO()],
+    unlockedIdx: 0,
+    dismissedOnDate: {},
+    redDaysCount: s.specialMode === 'red' ? 1 : 0,
+    redExtendedUntil: null,
+    fierceUntilDate: null,
+    pauseDaysCount: s.specialMode === 'pause' ? 1 : 0,
+    pauseQuietUntil: null,
+    lastReturnGap: 0
+  }, s.companion || {});
+  if (!['wayfarer', 'hearth', 'sprout', 'kintsugi', 'astrolabe'].includes(s.companion.archetype)) {
+    s.companion.archetype = 'wayfarer';
+  }
+  if (!Array.isArray(s.companion.activeDates) || !s.companion.activeDates.length) {
+    s.companion.activeDates = [s.lastDay || localTodayISO()];
+  }
+  s.companion.unlockedIdx = Math.max(
+    Number(s.companion.unlockedIdx) || 0,
+    Math.min(6, s.companion.activeDates.length - 1)
+  );
+
+  // Нормализовать режим подачи этапа (all | one) и порядок разовых шагов внутри этапа
+  for (const st of s.stages) {
+    st.feedMode = st.feedMode === 'one' ? 'one' : 'all';
+  }
+  s.items.forEach((it, idx) => {
+    if (typeof it.stageOrder !== 'number') it.stageOrder = idx + 1;
+  });
 
   // Гарантировать валидный currentStageId у каждого живого блока
   for (const b of s.blocks) {
@@ -261,13 +296,54 @@ function ensureDayObj(state, dateIso) {
   return state.days[dateIso];
 }
 
-// Сборка видимого дня и скрытых по темпу/режиму дел (Точное соблюдение правила R2!)
+function isConveyorQueueTask(it) {
+  return !!(
+    it && !it.archivedAt && it.status !== 'archived' &&
+    it.stageId && it.kind === 'task' &&
+    (!it.schedule || it.schedule.type === 'once') &&
+    !(it.schedule && it.schedule.date) &&
+    it.inDay !== false
+  );
+}
+
+function getStageConveyorMap(state, dateIso) {
+  const waiting = new Map();
+  const nextTomorrow = new Map();
+  const headIds = new Set();
+
+  for (const st of (state.stages || [])) {
+    if (st.archivedAt || st.feedMode !== 'one') continue;
+    const qItems = state.items
+      .filter(it => it.stageId === st.id && isConveyorQueueTask(it))
+      .sort((a, b) => (Number(a.stageOrder) || 0) - (Number(b.stageOrder) || 0));
+    if (!qItems.length) continue;
+
+    const doneToday = qItems.some(qi => getItemProgressOnDate(state, qi, dateIso).done);
+    const openQueue = qItems.filter(qi => !isOneOffEverDoneInCurrentCycle(state, qi));
+
+    if (!doneToday) {
+      if (openQueue[0]) headIds.add(openQueue[0].id);
+      openQueue.slice(1).forEach((qi, idx) => {
+        waiting.set(qi.id, { pos: idx + 2, stageName: st.name });
+      });
+    } else {
+      openQueue.forEach((qi, idx) => {
+        nextTomorrow.set(qi.id, { pos: idx + 1, isNext: idx === 0, stageId: st.id, stageName: st.name });
+      });
+    }
+  }
+  return { waiting, nextTomorrow, headIds };
+}
+
+// Сборка видимого дня и скрытых по темпу/режиму дел (Точное соблюдение правила R2 + режим этапа «По одному шагу»!)
 function assembleDayPlan(state, dateIso) {
   const dayRec = ensureDayObj(state, dateIso);
   const tempo = dayRec.tempo || 'normal'; // 'rest' | 'normal' | 'intense'
   const isBasic = state.complexity === 'basic';
   const visible = [];
   const hidden = [];
+  const nextConveyorOffers = [];
+  const conv = getStageConveyorMap(state, dateIso);
 
   for (const it of state.items) {
     if (it.archivedAt || it.status === 'archived') continue;
@@ -298,6 +374,25 @@ function assembleDayPlan(state, dateIso) {
     }
 
     const hasOverride = dayRec.overrides.includes(it.id) || prog.done;
+
+    // Фильтр бережной очереди этапа «По одному шагу» (не затрагивает привычки и календарь!)
+    if (!hasOverride) {
+      if (conv.waiting.has(it.id)) {
+        const wMeta = conv.waiting.get(it.id);
+        hidden.push({ item: it, reason: `В очереди этапа «${wMeta.stageName}» (шаг №${wMeta.pos})` });
+        continue;
+      }
+      if (conv.nextTomorrow.has(it.id)) {
+        const nMeta = conv.nextTomorrow.get(it.id);
+        if (nMeta.isNext) {
+          nextConveyorOffers.push({ item: it, stageId: nMeta.stageId, stageName: nMeta.stageName });
+          hidden.push({ item: it, reason: `Следующий шаг этапа «${nMeta.stageName}» — на завтра` });
+        } else {
+          hidden.push({ item: it, reason: `В очереди этапа «${nMeta.stageName}»` });
+        }
+        continue;
+      }
+    }
     if (!hasOverride && it.kind !== 'calendar') {
       if (state.specialMode === 'pause') {
         hidden.push({ item: it, reason: 'Творческая пауза (без пропуска)' });
@@ -333,7 +428,7 @@ function assembleDayPlan(state, dateIso) {
     return ((bb ? bb.priority : 0) - (ab ? ab.priority : 0));
   });
 
-  return { dayRec, tempo, visible, hidden };
+  return { dayRec, tempo, visible, hidden, nextConveyorOffers, conveyorHeadIds: conv.headIds };
 }
 
 // Корректная смена суток ДО любой мутации (Инвариант #6 из аудита Claude + правило отдыха R2!)
@@ -372,7 +467,10 @@ function advanceToDateV3(state, targetIso) {
             state.missed.push({ id: uid('ms'), mKey, itemId: it.id, kind: 'task', title: it.title, date: cur, status: 'open' });
           }
         } else if (!state.carryovers.some(c => c.itemId === it.id)) {
-          state.carryovers.push({ id: uid('co'), itemId: it.id, fromDate: cur, title: it.title });
+          const itStg = it.stageId ? state.stages.find(s => s.id === it.stageId) : null;
+          if (!(itStg && itStg.feedMode === 'one')) {
+            state.carryovers.push({ id: uid('co'), itemId: it.id, fromDate: cur, title: it.title });
+          }
         }
       }
     }
@@ -380,6 +478,25 @@ function advanceToDateV3(state, targetIso) {
   }
 
   state.lastDay = targetIso;
+  if (state.companion) {
+    if (Array.isArray(state.companion.activeDates)) {
+      if (!state.companion.activeDates.includes(targetIso)) {
+        state.companion.activeDates.push(targetIso);
+      }
+      state.companion.unlockedIdx = Math.min(6, state.companion.activeDates.length - 1);
+    }
+    if (state.specialMode === 'red') {
+      state.companion.redDaysCount = Math.max(1, (Number(state.companion.redDaysCount) || 1) + gap);
+    } else {
+      state.companion.redDaysCount = 0;
+    }
+    if (state.specialMode === 'pause') {
+      state.companion.pauseDaysCount = Math.max(1, (Number(state.companion.pauseDaysCount) || 1) + gap);
+    } else {
+      state.companion.pauseDaysCount = 0;
+    }
+    state.companion.lastReturnGap = gap >= 3 ? gap : 0;
+  }
   state.redCare = { sleep: false, water: false, rest: false };
   ensureDayObj(state, targetIso);
   return { gapDays: gap };

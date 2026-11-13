@@ -1,5 +1,5 @@
-// LifeGame 3.0 Service Worker — принудительно очищает старые кэши v1/v2 при обновлении GitHub Pages!
-const CACHE_NAME = 'lifegame-v3.0.0';
+// LifeGame 3.0.2 Service Worker — обновляет кэш GitHub Pages без потери localStorage пользователя!
+const CACHE_NAME = 'lifegame-v3.0.2';
 const ASSETS = [
   "./",
   "./index.html",
@@ -7,6 +7,8 @@ const ASSETS = [
   "./styles.css",
   "./data.js",
   "./kernel.js",
+  "./companion-avatar.js",
+  "./companion-db.js",
   "./views-core.js",
   "./views-extras.js",
   "./app.js",

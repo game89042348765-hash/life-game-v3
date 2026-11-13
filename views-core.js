@@ -83,6 +83,58 @@ function renderActionRow(state, item, opts) {
 }
 
 // ============================================================================
+function getNextOnboardingIdx(state) {
+  const c = state.companion || { done: {}, skipped: {} };
+  for (let i = 0; i < LG3_ONBOARDING_7_DAYS.length; i++) {
+    if (!c.done[i] && !c.skipped[i]) return i;
+  }
+  return -1;
+}
+
+function renderHomeOnboardingCard(state) {
+  const c = state.companion;
+  if (!c || c.enabled === false || c.homeMinimized) return '';
+  const nextIdx = getNextOnboardingIdx(state);
+  if (nextIdx < 0) return '';
+  const stepObj = LG3_ONBOARDING_7_DAYS[nextIdx];
+  const arch = getCompanionArchetype(c.archetype);
+  const w = calcWallet(state);
+  const posture = resolveCompanionPosture(state, window.UI3 ? window.UI3.previewPosture : null);
+  const miniSvg = LG3CompanionAvatar.renderStaticPreviewSVG(arch.id, posture, w.level, countRedCareDone(state));
+  return `
+    <div class="card" style="border-color:var(--accent-border); background:linear-gradient(145deg, var(--accent-soft), var(--card) 68%); display:flex; flex-direction:column; gap:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <span style="font-size:11px; font-weight:800; color:var(--accent); letter-spacing:0.08em; text-transform:uppercase; display:inline-flex; align-items:center; gap:6px;">
+          ${LG3_COMPANION_ICON} ${esc(arch.name)} · ДЕНЬ ${stepObj.step} ИЗ 7
+        </span>
+        <button type="button" class="mini-btn" data-act="minimize-home-helper" title="Свернуть подсказку в шапку">Свернуть</button>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div style="flex-shrink:0;">${miniSvg}</div>
+        <div style="min-width:0;">
+          <div style="font-size:14.5px; font-weight:750; line-height:1.26;">${esc(stepObj.title)}</div>
+          <div style="font-size:12px; color:var(--accent); margin-top:2px;">«${esc(arch.voices[posture] || arch.voices.pro)}»</div>
+        </div>
+      </div>
+      <div style="font-size:12.5px; color:var(--muted); line-height:1.42;">${esc(stepObj.body)}</div>
+      ${nextIdx === 0 ? `
+        <div class="pills" style="gap:5px;">
+          ${LG3_COMPANION_ARCHETYPES.map(a => `
+            <button type="button" class="pill ${arch.id === a.id ? 'active' : ''}" style="font-size:11.5px; padding:4px 9px;" data-act="set-companion-archetype" data-val="${esc(a.id)}">${esc(a.name)}</button>
+          `).join('')}
+        </div>
+      ` : ''}
+      <div style="display:flex; gap:7px; flex-wrap:wrap; margin-top:2px;">
+        ${nextIdx === 0
+          ? `<button type="button" class="pill active" data-act="open-helper">Примерить 3 режима →</button>`
+          : `<button type="button" class="pill active" data-act="helper-go-step" data-idx="${nextIdx}">${esc(stepObj.actionLabel)} →</button>`}
+        <button type="button" class="mini-btn" data-act="helper-mark-step" data-idx="${nextIdx}" data-how="done">✓ Уже знакомо</button>
+        <button type="button" class="mini-btn" data-act="open-helper">Все подсказки</button>
+      </div>
+    </div>
+  `;
+}
+
 // 1. ГЛАВНАЯ (В духе самой первой версии: воздух, карточки-входы, без перегруза)
 // ============================================================================
 function renderHomeView(state) {
@@ -111,6 +163,8 @@ function renderHomeView(state) {
           ${esc(state.settings.motivationText || 'Ради чего ты действуешь? Напиши свою опору — или скрой в настройках.')}
         </div>
       ` : ''}
+
+      ${renderHomeOnboardingCard(state)}
 
       <div class="lv-wrap">
         <div class="lv-row">
@@ -415,6 +469,18 @@ function renderDayConstructorView(state) {
         </div>
       ` : ''}
 
+      ${(plan.nextConveyorOffers && plan.nextConveyorOffers.length > 0) ? `
+        <div class="card-2" style="border-color:var(--accent-border); display:flex; flex-direction:column; gap:7px;">
+          <div style="font-size:11.5px; font-weight:750; color:var(--good);">✓ Шаг очереди этапа на сегодня выполнен — следующий запланирован на завтра:</div>
+          ${plan.nextConveyorOffers.map(off => `
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+              <span style="font-size:12.5px; color:var(--muted);">Далее в «${esc(off.stageName)}»: <strong style="color:var(--text);">${esc(off.item.title)}</strong></span>
+              <button type="button" class="mini-btn" style="color:var(--accent); border-color:var(--accent-border);" data-act="show-hidden-today" data-id="${esc(off.item.id)}">+ Взять уже сегодня</button>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+
       <!-- Свёрнутое Выполнено сегодня -->
       ${doneRows.length > 0 ? `
         <details class="card-2" ${doneRows.length <= 3 ? 'open' : ''}>
@@ -609,11 +675,21 @@ function renderSingleBlockView(state) {
           </div>
         `).join('')}
 
-        <!-- ДЕЙСТВИЯ ЭТАПА (те же единые ID, что и в Конструкторе дня!) -->
-        <div style="display:flex; justify-content:space-between; align-items:center; padding-top:4px;">
+        <!-- ДЕЙСТВИЯ ЭТАПА + переключатель пошаговой подачи конвейера -->
+        <div style="display:flex; justify-content:space-between; align-items:center; padding-top:4px; gap:8px; flex-wrap:wrap;">
           <span style="font-size:11.5px; font-weight:750; letter-spacing:0.1em; color:var(--muted); text-transform:uppercase;">ДЕЙСТВИЯ В ЭТАПЕ (${stageItems.length + stageQuests.length})</span>
           <button type="button" class="btn-primary" style="padding:6px 12px; font-size:12px;" data-act="open-item-editor" data-stage="${esc(viewStage.id)}" data-block="${esc(blk.id)}" data-id="">+ Добавить действие</button>
         </div>
+
+        ${stageItems.length > 0 ? `
+          <div class="card-2" style="padding:9px 12px; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span style="font-size:12px; color:var(--muted);">Подача разовых шагов в день:</span>
+            <div style="display:inline-flex; gap:5px;">
+              <button type="button" class="mini-btn" style="${viewStage.feedMode !== 'one' ? 'background:var(--accent); color:var(--on-accent); border-color:var(--accent); font-weight:750;' : ''}" data-act="set-stage-feed" data-id="${esc(viewStage.id)}" data-val="all">Все выбранные</button>
+              <button type="button" class="mini-btn" style="${viewStage.feedMode === 'one' ? 'background:var(--accent); color:var(--on-accent); border-color:var(--accent); font-weight:750;' : ''}" data-act="set-stage-feed" data-id="${esc(viewStage.id)}" data-val="one">По одному шагу</button>
+            </div>
+          </div>
+        ` : ''}
 
         ${stageItems.length === 0 && stageQuests.length === 0 ? `
           <div class="card-2" style="font-size:13px; color:var(--muted); text-align:center; padding:18px;">
@@ -621,7 +697,33 @@ function renderSingleBlockView(state) {
           </div>
         ` : `
           <div style="display:flex; flex-direction:column; gap:8px;">
-            ${stageItems.map(it => renderActionRow(state, it, { hideBlock: true })).join('')}
+            ${(() => {
+              const sortedStageItems = stageItems.slice().sort((a, b) => (Number(a.stageOrder) || 0) - (Number(b.stageOrder) || 0));
+              const openQueue = viewStage.feedMode === 'one'
+                ? sortedStageItems.filter(x => isConveyorQueueTask(x) && !isOneOffEverDoneInCurrentCycle(state, x))
+                : [];
+              const doneTodayInQueue = viewStage.feedMode === 'one' && sortedStageItems.some(x => isConveyorQueueTask(x) && getItemProgressOnDate(state, x, state.lastDay).done);
+              return sortedStageItems.map(it => {
+                const qIdx = openQueue.findIndex(q => q.id === it.id);
+                if (viewStage.feedMode !== 'one' || qIdx < 0) {
+                  return renderActionRow(state, it, { hideBlock: true });
+                }
+                const isHead = qIdx === 0 && !doneTodayInQueue;
+                const badgeText = isHead ? '● Сейчас в дне (шаг №1)' : (qIdx === 0 && doneTodayInQueue ? 'На завтра (следующий шаг)' : `В очереди · №${qIdx + 1}`);
+                return `
+                  <div style="display:flex; flex-direction:column; gap:4px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:0 4px;">
+                      <span class="conveyor-badge ${isHead ? 'is-head' : ''}">${badgeText}</span>
+                      <span style="display:inline-flex; gap:4px;">
+                        ${qIdx > 0 ? `<button type="button" class="mini-btn" style="padding:2px 7px;" data-act="move-stage-item-order" data-id="${esc(it.id)}" data-dir="-1" title="Поднять раньше в очереди">↑</button>` : ''}
+                        ${qIdx < openQueue.length - 1 ? `<button type="button" class="mini-btn" style="padding:2px 7px;" data-act="move-stage-item-order" data-id="${esc(it.id)}" data-dir="1" title="Отложить позже в очереди">↓</button>` : ''}
+                      </span>
+                    </div>
+                    ${renderActionRow(state, it, { hideBlock: true })}
+                  </div>
+                `;
+              }).join('');
+            })()}
             ${stageQuests.map(q => `
               <div class="card-2" style="display:flex; justify-content:space-between; align-items:center;">
                 <span>💎 Квест: <strong>${esc(q.title)}</strong> (${q.qtype === 'counter' ? `${q.progress}/${q.target}` : `${q.steps.filter(s=>s.done).length}/${q.steps.length}`})</span>
